@@ -6,7 +6,7 @@ from delta.tables import *
 def MergeNinja(
         sourceObject
         , targetTableDir
-        , columnsToMatch=["recid"]
+        , columnsToMatch=['recid']
         , typeIIColumns=['name', 'segment']
         , columnsToSkip=[]
         , partitionPruningColumn=None
@@ -47,7 +47,8 @@ def MergeNinja(
                         'SCDendDate']  # ['SCDcurrent','SCDeffectiveDate','SCDendDate','SCDcompareKey']
         ignoreColumns = columnsToSkip
         matchColumns = columnsToMatch
-        compareColumns = typeIIColumns
+        compareColumns = [col for col in targetTableColumns if
+                          col not in matchColumns + auditColumns + ignoreColumns] if typeIIColumns == '*' else typeIIColumns
         synchColumns = [col for col in targetTableColumns if
                         col not in matchColumns + auditColumns + ignoreColumns + compareColumns]
 
