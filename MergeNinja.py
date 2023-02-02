@@ -10,8 +10,9 @@ def MergeNinja(
         , typeIIColumns=['name', 'segment']
         , columnsToSkip=[]
         , partitionPruningColumn=None
-        , targetTableAlteration=False
         , stream=False
+        , checkpointSubFolder=None
+        , targetTableAlteration=False
 ):
     ### Check if targetTable-schema needs updating to accommodate SCD
     if targetTableAlteration == True:
@@ -125,9 +126,9 @@ def MergeNinja(
                        .format("delta")
                        ##.outputMode("append")
                        .foreachBatch(SCDstream)
-                       .option("checkpointLocation",
-                               "abfss://jf-container@daxdatalakestorage.dfs.core.windows.net/SCDtypeIIStreamTest")
+                       .option("checkpointLocation", targetTableDir + '/_checkpoint' + (
+            f'/{checkpointSubFolder}' if checkpointSubFolder != None else ''))
                        .option("mergeSchema", True)
-                       ##.trigger(once=True)
+                       .trigger(once=True)
                        .start()
                        )
