@@ -100,7 +100,7 @@ def MergeNinja(
             .union(updatesDF.selectExpr(mergeKeyDefinition, "*"))  # Rows for 2.
         )
 
-        ## Apply SCD Type 2 operation using merge.
+        ## Apply SCD-operation using merge. If no compareColumns are provided = SCD-type1. Else SCD-type2
         # None-matching records can be grouped in following two categories: 1) rows reflecting new SCD-values for existing records, and 2) entirely new records.
         # Matching records can be grouped in two categories: 1) existing records with old SCD-values needing to be marked as obsolete and provided and SCDendDate, and 2) existing records where there might/might not be updates to none-SCD-columns
         (targetTable.alias("target")
