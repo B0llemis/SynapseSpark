@@ -4,8 +4,8 @@ from delta.tables import *
 
 
 def MergeNinja(
-        sourceObject
-        , targetTableDir
+        source
+        , target
         , columnsToMatch=['recid']
         , typeIIColumns=['name', 'segment']
         , columnsToSkip=[]
@@ -17,23 +17,23 @@ def MergeNinja(
     ### Check if targetTable-schema needs updating to accommodate SCD
     if targetTableAlteration == True:
         # Look up targetTable-columns from schema
-        targetTableColumns = DeltaTable.forPath(spark, targetTableDir).toDF().schema.names
+        targetTableColumns = DeltaTable.forPath(spark, target).toDF().schema.names
         # Modify targetTable if not compatible with SCD-columns:
         if 'SCDcurrent' not in targetTableColumns:
-            spark.sql(f"ALTER TABLE {targetTableDir} ADD COLUMN SCDcurrent STRING")
+            spark.sql(f"ALTER TABLE {target} ADD COLUMN SCDcurrent STRING")
         if 'SCDeffectiveDate' not in targetTableColumns:
-            spark.sql(f"ALTER TABLE {targetTableDir} ADD COLUMN SCDeffectiveDate STRING")
+            spark.sql(f"ALTER TABLE {target} ADD COLUMN SCDeffectiveDate STRING")
         if 'SCDendDate' not in targetTableColumns:
-            spark.sql(f"ALTER TABLE {targetTableDir} ADD COLUMN SCDendDate STRING")
+            spark.sql(f"ALTER TABLE {target} ADD COLUMN SCDendDate STRING")
         if 'SCDcompareKey' not in targetTableColumns:
-            spark.sql(f"ALTER TABLE {targetTableDir} ADD COLUMN SCDcompareKey STRING")
+            spark.sql(f"ALTER TABLE {target} ADD COLUMN SCDcompareKey STRING")
 
     ### BATCH-FUNCTION
 
-    def SCDbatch(sourceDF=sourceObject):
+    def SCDbatch(sourceDF=source):
 
         ## Declare target-table
-        targetTable = DeltaTable.forPath(spark, targetTableDir)
+        targetTable = DeltaTable.forPath(spark, target)
 
         ## During Merge-operation the fields for a given row in the target-tabel can be separated into following categories based on intented behaviour:
         # Total - all the fields in the target-table
@@ -56,7 +56,7 @@ def MergeNinja(
         ## Defines criterias used in the different Merge-operation scenarios
         # mergeKeyDefinition - hash-concationation of matchColumns into a single field on the source-side
         # matchCriteria - applying the same has-concation on matchColumns on the target-side and comparing with source-side mergeKey. Alternatively adding Partition Pruning clause on target-side.
-        # updateCriteria - checking if compareColumns differ on source-side and target-side
+        # newVersionCriteria - checking if compareColumns differ on source-side and target-side
         # synchCriteria - checking if compareColumns are identical on source-side and target-side
 
         mergeKeyDefinition = f"""SHA2(concat_ws(',',{", ".join([col for col in matchColumns])}),512) AS mergeKey"""
@@ -64,8 +64,7 @@ def MergeNinja(
         if partitionPruningColumn != None:
             activePartitions = ", ".join([row[0] for row in sourceDF.select(f"{partitionPruningColumn}").collect()])
             matchCriteria += f" AND target.{partitionPruningColumn} IN ({activePartitions})"
-        updateCriteria = "target.SCDcurrent = true AND " + " OR ".join(
-            [f"target.{col} <> source.{col}" for col in compareColumns])
+        newVersionCriteria = f"""target.SCDcurrent = true AND ({" OR ".join([f"target.{col} <> source.{col}" for col in compareColumns])})"""
         synchCriteria = "target.SCDcurrent = true AND " + " AND ".join(
             [f"target.{col} = source.{col}" for col in compareColumns])
 
@@ -82,7 +81,7 @@ def MergeNinja(
                        .join(
             targetTable.toDF().alias("target"),
             matchColumns
-        ).where(updateCriteria)
+        ).where(newVersionCriteria)
                        )
 
         # Stage the update by unioning two sets of rows
@@ -102,10 +101,10 @@ def MergeNinja(
             stackedUpdates.alias("source"),
             matchCriteria
         ).whenMatchedUpdate(
-            condition=updateCriteria,
+            condition=newVersionCriteria,
             set={  # Set current to false and endDate to source's effective date.
-                "SCDcurrent": "false",
-                "SCDendDate": current_timestamp()
+                "target.SCDcurrent": "false",
+                "target.SCDendDate": current_timestamp()
             }
         ).whenMatchedUpdate(
             condition=synchCriteria,
@@ -122,11 +121,11 @@ def MergeNinja(
     if stream == False:
         SCDbatch()
     elif stream == True:
-        streamQuery = (sourceObject.writeStream
+        streamQuery = (source.writeStream
                        .format("delta")
                        ##.outputMode("append")
                        .foreachBatch(SCDstream)
-                       .option("checkpointLocation", targetTableDir + '/_checkpoint' + (
+                       .option("checkpointLocation", target + '/_checkpoint' + (
             f'/{checkpointSubFolder}' if checkpointSubFolder != None else ''))
                        .option("mergeSchema", True)
                        .trigger(once=True)
