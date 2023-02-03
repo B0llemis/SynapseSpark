@@ -65,8 +65,7 @@ def MergeNinja(
             activePartitions = ", ".join([row[0] for row in sourceDF.select(f"{partitionPruningColumn}").collect()])
             matchCriteria += f" AND target.{partitionPruningColumn} IN ({activePartitions})"
         newVersionCriteria = f"""target.SCDcurrent = true AND ({" OR ".join([f"target.{col} <> source.{col}" for col in compareColumns])})"""
-        synchCriteria = "target.SCDcurrent = true AND " + " AND ".join(
-            [f"target.{col} = source.{col}" for col in compareColumns])
+        synchCriteria = f"""target.SCDcurrent = true AND ({" AND ".join([f"target.{col} = source.{col}" for col in compareColumns])})"""
 
         ## The Audit-columns are added to the source
         updatesDF = (sourceDF
