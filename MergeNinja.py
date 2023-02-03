@@ -6,9 +6,9 @@ from delta.tables import *
 def MergeNinja(
         source
         , target
-        , typeIIColumns
         , columnsToMatch: list
         , columnsToSkip: list
+        , typeIIColumns=[]
         , partitionPruningColumn: str = None
         , stream=False
         , checkpointSubFolder: str = None
@@ -64,10 +64,8 @@ def MergeNinja(
         if partitionPruningColumn != None:
             activePartitions = ", ".join([row[0] for row in sourceDF.select(f"{partitionPruningColumn}").collect()])
             matchCriteria += f" AND target.{partitionPruningColumn} IN ({activePartitions})"
-        newVersionCriteria = "false" if len(
-            typeIIColumns) == 0 else f"""target.SCDcurrent = true AND ({" OR ".join([f"target.{col} <> source.{col}" for col in compareColumns])})"""
-        synchCriteria = "true" if len(
-            typeIIColumns) == 0 else f"""target.SCDcurrent = true AND {" AND ".join([f"target.{col} = source.{col}" for col in compareColumns])}"""
+        newVersionCriteria = "false" if typeIIColumns == [] else f"""target.SCDcurrent = true AND ({" OR ".join([f"target.{col} <> source.{col}" for col in compareColumns])})"""
+        synchCriteria = "true" if typeIIColumns == [] else f"""target.SCDcurrent = true AND {" AND ".join([f"target.{col} = source.{col}" for col in compareColumns])}"""
 
         ## The Audit-columns are added to the source
         updatesDF = (sourceDF
