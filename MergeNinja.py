@@ -6,12 +6,12 @@ from delta.tables import *
 def MergeNinja(
         source
         , target
-        , columnsToMatch=['recid']
-        , typeIIColumns=['name', 'segment']
-        , columnsToSkip=[]
-        , partitionPruningColumn=None
+        , columnsToMatch: list
+        , typeIIColumns: list
+        , columnsToSkip: list
+        , partitionPruningColumn: str = None
         , stream=False
-        , checkpointSubFolder=None
+        , checkpointSubFolder: str = None
         , targetTableAlteration=False
 ):
     ### Check if targetTable-schema needs updating to accommodate SCD
