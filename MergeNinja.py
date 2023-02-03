@@ -1,6 +1,7 @@
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
 from delta.tables import *
+from pyspark.sql.window import Window
 
 
 def MergeNinja(
@@ -10,6 +11,7 @@ def MergeNinja(
         , columnsToSkip: list
         , typeIIColumns=[]
         , partitionPruningColumn: str = None
+        , surrogateKeyColumn: str = None
         , stream=False
         , checkpointSubFolder: str = None
         , targetTableAlteration=False
@@ -46,7 +48,7 @@ def MergeNinja(
         targetTableColumns = targetTable.toDF().schema.names
         auditColumns = ['SCDcurrent', 'SCDeffectiveDate',
                         'SCDendDate']  # ['SCDcurrent','SCDeffectiveDate','SCDendDate','SCDcompareKey']
-        ignoreColumns = columnsToSkip
+        ignoreColumns = [col for col in columnsToSkip + [surrogateKeyColumn] if col != None]
         matchColumns = columnsToMatch
         compareColumns = [col for col in targetTableColumns if
                           col not in matchColumns + auditColumns + ignoreColumns] if typeIIColumns == '*' else typeIIColumns
@@ -74,6 +76,12 @@ def MergeNinja(
                      .withColumn("SCDendDate", lit("NULL"))
                      # .withColumn("SCDcompareKey",expr(f"""SHA2(concat_ws(',',{", ".join([col for col in compareColumns])}),512)"""))
                      )
+
+        ## SurrogateKey-values are generated based on row-number ordering if feature is turned on. !!! Only provides unique keys for SCD-type 1 !!!
+        if surrogateKeyColumn != None:
+            maxKey = targetTable.toDF().selectExpr(f"max({surrogateKeyColumn})").first()[0]
+            window = Window.orderBy(lit("1"))
+            updatesDF = updatesDF.withColumn(surrogateKeyColumn, int(maxKey or 0) + row_number().over(window))
 
         ## Source-rows with new values in the Compare-columns are identified
         newVersions = (updatesDF.alias("source")
@@ -122,7 +130,6 @@ def MergeNinja(
     elif stream == True:
         streamQuery = (source.writeStream
                        .format("delta")
-                       ##.outputMode("append")
                        .foreachBatch(SCDstream)
                        .option("checkpointLocation", target + '/_checkpoint' + (
             f'/{checkpointSubFolder}' if checkpointSubFolder != None else ''))
