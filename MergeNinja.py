@@ -64,8 +64,10 @@ def MergeNinja(
         if partitionPruningColumn != None:
             activePartitions = ", ".join([row[0] for row in sourceDF.select(f"{partitionPruningColumn}").collect()])
             matchCriteria += f" AND target.{partitionPruningColumn} IN ({activePartitions})"
-        newVersionCriteria = f"""target.SCDcurrent = true AND ({" OR ".join([f"target.{col} <> source.{col}" for col in compareColumns])})"""
-        synchCriteria = f"""target.SCDcurrent = true AND {" AND ".join([f"target.{col} = source.{col}" for col in compareColumns])}"""
+        newVersionCriteria = "false" if len(
+            typeIIColumns) == 0 else f"""target.SCDcurrent = true AND ({" OR ".join([f"target.{col} <> source.{col}" for col in compareColumns])})"""
+        synchCriteria = "true" if len(
+            typeIIColumns) == 0 else f"""target.SCDcurrent = true AND {" AND ".join([f"target.{col} = source.{col}" for col in compareColumns])}"""
 
         ## The Audit-columns are added to the source
         updatesDF = (sourceDF
@@ -83,7 +85,7 @@ def MergeNinja(
         ).where(newVersionCriteria)
                        )
 
-        # Stage the update by unioning two sets of rows
+        ## Stage the update by unioning two sets of rows
         # 1. The rows that has just been set aside in above step (these are to be inserted as "current" versions of existing records)
         # 2. Rows that will either update the current attribute-labels of existing records or insert the new labels of new records
         stackedUpdates = (
@@ -94,7 +96,7 @@ def MergeNinja(
 
         # Apply SCD Type 2 operation using merge.
         # None-matching records can be grouped in following two categories: 1) rows reflecting new SCD-values for existing records, and 2) entirely new records.
-        # M atching records can be grouped in two categories: 1) existing records with old SCD-values needing to be marked as obsolete and provided and SCDendDate, and 2) existing records where there might/might not be updates to none-SCD-columns
+        # Matching records can be grouped in two categories: 1) existing records with old SCD-values needing to be marked as obsolete and provided and SCDendDate, and 2) existing records where there might/might not be updates to none-SCD-columns
         (targetTable.alias("target")
          .merge(
             stackedUpdates.alias("source"),
