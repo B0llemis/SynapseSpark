@@ -92,7 +92,7 @@ def MergeNinja(
             .union(updatesDF.selectExpr(mergeKeyDefinition, "*"))  # Rows for 2.
         )
 
-        # Apply SCD Type 2 operation using merge.
+        ## Apply SCD Type 2 operation using merge.
         # None-matching records can be grouped in following two categories: 1) rows reflecting new SCD-values for existing records, and 2) entirely new records.
         # Matching records can be grouped in two categories: 1) existing records with old SCD-values needing to be marked as obsolete and provided and SCDendDate, and 2) existing records where there might/might not be updates to none-SCD-columns
         (targetTable.alias("target")
@@ -101,7 +101,7 @@ def MergeNinja(
             matchCriteria
         ).whenMatchedUpdate(
             condition=newVersionCriteria,
-            set={  # Set current to false and endDate to source's effective date.
+            set={
                 "target.SCDcurrent": "false",
                 "target.SCDendDate": current_timestamp()
             }
