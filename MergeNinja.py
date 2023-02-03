@@ -7,7 +7,7 @@ def MergeNinja(
         source
         , target
         , columnsToMatch: list
-        , typeIIColumns
+        , typeIIColumns=[],
         , columnsToSkip: list
         , partitionPruningColumn: str = None
         , stream=False
