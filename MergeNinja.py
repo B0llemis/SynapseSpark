@@ -12,30 +12,32 @@ def MergeNinja(
         , typeIIColumns=[]
         , partitionPruningColumn: str = None
         , surrogateKeyColumn: str = None
-        , stream=False
+        , stream: bool = False
         , checkpointSubFolder: str = None
-        , targetTableAlteration=False
+        , softDelete: bool = False
+        , targetTableAlteration: bool = False
 ):
     ### Check if targetTable-schema needs updating to accommodate SCD
     if targetTableAlteration == True:
         # Look up targetTable-columns from schema
+        targetTableName = targetDeltaTable.detail().first()['name']
         targetTableColumns = DeltaTable.forPath(spark, targetDeltaTable).toDF().schema.names
         # Modify targetTable if not compatible with SCD-columns:
         if 'SCDcurrent' not in targetTableColumns:
-            spark.sql(f"ALTER TABLE {targetDeltaTable} ADD COLUMN SCDcurrent STRING")
+            spark.sql(f"ALTER TABLE {targetTableName} ADD COLUMN SCDcurrent STRING")
         if 'SCDeffectiveDate' not in targetTableColumns:
-            spark.sql(f"ALTER TABLE {targetDeltaTable} ADD COLUMN SCDeffectiveDate STRING")
+            spark.sql(f"ALTER TABLE {targetTableName} ADD COLUMN SCDeffectiveDate STRING")
         if 'SCDendDate' not in targetTableColumns:
-            spark.sql(f"ALTER TABLE {targetDeltaTable} ADD COLUMN SCDendDate STRING")
+            spark.sql(f"ALTER TABLE {targetTableName} ADD COLUMN SCDendDate STRING")
         if 'SCDcompareKey' not in targetTableColumns:
-            spark.sql(f"ALTER TABLE {targetDeltaTable} ADD COLUMN SCDcompareKey STRING")
+            spark.sql(f"ALTER TABLE {targetTableName} ADD COLUMN SCDcompareKey STRING")
 
     ### BATCH-FUNCTION
 
     def SCDbatch(sourceDF=sourceDataFrame):
 
         ## Declare target-table
-        targetTable = DeltaTable.forPath(spark, targetDeltaTable)
+        targetTable = targetDeltaTable
 
         ## During Merge-operation the fields for a given row in the target-tabel can be separated into following categories based on intented behaviour:
         # Total - all the fields in the target-table
@@ -66,6 +68,13 @@ def MergeNinja(
         newVersionCriteria = "false" if typeIIColumns == [] else f"""target.SCDcurrent = true AND ({" OR ".join([f"target.{col} <> source.{col}" for col in compareColumns])})"""
         synchCriteria = "true" if typeIIColumns == [] else f"""target.SCDcurrent = true AND {" AND ".join([f"target.{col} = source.{col}" for col in compareColumns])}"""
 
+        ## Define column-maps used in the different Merge-operation scenarios
+        newVersionMap = {
+            "target.SCDcurrent": "false",
+            "target.SCDendDate": current_timestamp()
+        }
+        synchMap = {'target.' + col: 'source.' + col for col in synchColumns}
+
         ## The Audit-columns are added to the source
         updatesDF = (sourceDF
                      .withColumn("SCDcurrent", lit("true"))
@@ -90,34 +99,49 @@ def MergeNinja(
                        .join(
             targetTable.toDF().alias("target"),
             matchColumns
-        ).where(newVersionCriteria)
+        )
+                       .where(newVersionCriteria)
                        )
 
         ## Stage the update by unioning two sets of rows
         # 1. The rows that has just been set aside in above step (these are to be inserted as "current" versions of existing records)
         # 2. Rows that will either update the current attribute-labels of existing records or insert the new labels of new records
-        stackedUpdates = (
+        stackedUpserts = (
             newVersions
             .selectExpr("NULL as mergeKey", "source.*")  # Rows for 1
             .union(updatesDF.selectExpr(mergeKeyDefinition, "*"))  # Rows for 2.
         )
+
+        ## OPTIONAL: Soft-Delete
+        if softDelete == True:
+            deletedRows = (targetTable.toDF().alias('target')
+                           .join(
+                updatesDF.alias('source'),
+                matchColumns,
+                'left_anti'
+            )
+                           .where('target.SCDcurrent=true')
+                           .withColumn('SCDcurrent', lit('deleted'))
+                           )
+            stackedUpserts = (stackedUpserts
+                              .union(deletedRows.selectExpr(mergeKeyDefinition, "*"))
+                              )
+            synchCriteria += " OR source.SCDcurrent = 'deleted'"
+            synchMap['target.SCDcurrent'] = 'source.SCDcurrent'
 
         ## Execute merge-operation.
         # None-matching records can be grouped in following two categories: 1) rows reflecting new SCD-values for existing records, and 2) entirely new records.
         # Matching records can be grouped in two categories: 1) existing records with old SCD-values needing to be marked as obsolete and provided and SCDendDate, and 2) existing records where there might/might not be updates to none-SCD-columns
         (targetTable.alias("target")
          .merge(
-            stackedUpdates.alias("source"),
+            stackedUpserts.alias("source"),
             matchCriteria
         ).whenMatchedUpdate(
             condition=synchCriteria,
-            set={'target.' + col: 'source.' + col for col in synchColumns}
+            set=synchMap
         ).whenMatchedUpdate(
             condition=newVersionCriteria,
-            set={
-                "target.SCDcurrent": "false",
-                "target.SCDendDate": current_timestamp()
-            }
+            set=newVersionMap
         ).whenNotMatchedInsertAll()
          .execute()
          )
@@ -130,10 +154,11 @@ def MergeNinja(
     if stream == False:
         SCDbatch()
     elif stream == True:
+        targetTableLoc = targetDeltaTable.detail().first()['location']
         streamQuery = (sourceDataFrame.writeStream
                        .format("delta")
                        .foreachBatch(SCDstream)
-                       .option("checkpointLocation", targetDeltaTable + '/_checkpoint' + (
+                       .option("checkpointLocation", targetTableLoc + '/_checkpoint' + (
             f'/{checkpointSubFolder}' if checkpointSubFolder != None else ''))
                        .option("mergeSchema", True)
                        .trigger(once=True)
